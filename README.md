@@ -140,6 +140,12 @@ moink/
 - 固件**不做任何图像处理**——所有像素由页面在浏览器端合成完毕后才发送
 - 请勿在固件中添加蓝牙（ESP32-C3 无 PSRAM，蓝牙会挤占 WiFi 缓冲）
 
+## 🙏 致谢
+
+本固件基于 [atunverse/moink](https://github.com/atunverse/moink) 的原始实现与 **eink-warm 暖调算法**改写而来，衷心感谢原作者的开源与硬件分享。`legacy_ref/` 中保留了旧版参考实现与算法真源，供追溯。
+
 ## 📄 许可
 
-私有项目，版权保留。如需开源请先补充 LICENSE 并检查 `legacy_ref/` 中第三方素材的授权情况。
+本项目以 [GPL-3.0](LICENSE) 开源发布。
+
+> 说明：`legacy_ref/` 内为原作者 eink-warm 算法的交接素材，其授权归属以原作者为准；`page/vendor/` 内嵌 Cropper.js v1.6.2（MIT）。如需再分发或商用，请确认上述第三方素材的授权范围。
