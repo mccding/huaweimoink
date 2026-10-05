@@ -1,0 +1,57 @@
+# ---- PlatformIO / 构建产物 ----
+.pio/
+.pioenvs/
+.piolibdeps/
+sdkconfig.old
+
+# ---- 固件/页面产物（可由源码重新生成；发布件走 GitHub Releases）----
+*.bin
+*.elf
+*.map
+*.zip
+unpacked/
+releases/
+# flash_kit 是一键刷机工具包，bin 是其内容，保留入库
+!flash_kit/*.bin
+
+# ---- 本地备份与历史版本（保留在磁盘，不入库）----
+backups/
+page/page-R1.0.*.html
+!page/page-R1.0.22.html
+!page/page-R1.0.23.html
+!page/page-R1.0.24.html
+# _r110_regress.js 的基线（从 git tag fw-R1.0.11_page-R1.0.26 还原到仓库根）
+page-R1.0.26.html
+tools/_refdrv/
+
+# ---- 内部过程文档（保留在磁盘，不入库）----
+docs/重构方案与架构设计.md
+docs/代码审查报告-*.html
+docs/会话摘要-*.md
+docs/未实施项说明-*.md
+docs/问题跟踪.md
+
+# ---- 临时/调试产物 ----
+tools/_*
+!tools/_exif_test.jpg
+!tools/_r110_regress.js
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# ---- 标定支线与样张（本地实验，不入库；见 docs/校准方案-FB-002.md）----
+page-calib/
+samples/
+
+# ---- 外部参考资料（大文件 / 第三方版权，不入库）----
+docs/ref/
+
+# ---- Python ----
+__pycache__/
+*.pyc
+.venv/
+
+# ---- 编辑器 ----
+.vscode/
+.idea/
