@@ -22,6 +22,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 
+#include "calendar.h"
 #include "frame.h"
 #include "power.h"
 #include "store.h"
@@ -135,6 +136,22 @@ void carousel_init(void)
 int carousel_enabled(void)
 {
     return s_car.on && s_car.n > 0 && store_slots() > 0;
+}
+
+int carousel_switch_on(void)
+{
+    return s_car.on;
+}
+
+/* 互斥副作用：日历被打开 → 轮播让出这块屏。只关开关，帧列表 / 游标 / 间隔全留着，
+   用户再开轮播时列表还在。 */
+int carousel_set_off(void)
+{
+    if (!s_car.on) return 0;
+    s_car.on = 0;
+    persist_cfg();
+    ESP_LOGW(TAG, "carousel turned off (日历开启，同一块屏只能有一个主人)");
+    return 1;
 }
 
 esp_err_t carousel_set_int(uint32_t v)
@@ -463,16 +480,23 @@ static esp_err_t cfg_handler(httpd_req_t *req)
             changed = 1;
         }
     }
+    /* 互斥（R1.5.2）：轮播开着就不让日历也开着，谁后开谁赢。这个副作用同样要算一次
+       变更，否则「只为夺回屏幕而点保存」会被 400 no changes 挡掉、互斥不发生。 */
+    int cal_off = 0;
+    if (s_car.on) cal_off = calendar_set_off();
+    if (cal_off) changed = 1;
+
     if (!changed) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "no changes");
         return ESP_OK;
     }
     persist_cfg();
 
-    char buf[96];
-    int n = snprintf(buf, sizeof(buf), "{\"on\":%u,\"mode\":%u,\"int_s\":%lu,\"next_in_s\":%lu}",
+    char buf[128];
+    int n = snprintf(buf, sizeof(buf),
+                     "{\"on\":%u,\"mode\":%u,\"int_s\":%lu,\"next_in_s\":%lu,\"cal_off\":%d}",
                      s_car.on, s_car.mode, (unsigned long)s_car.int_s,
-                     (unsigned long)carousel_next_in_s());
+                     (unsigned long)carousel_next_in_s(), cal_off);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
 }

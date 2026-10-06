@@ -10,6 +10,7 @@
 #include "freertos/task.h"
 #include "power.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -20,7 +21,11 @@ static const char *TAG = "ota_web";
 #define NVS_WEB_CRC  "web_crc"
 #define NVS_PAGE_VER "page_ver"
 
-#define OTA_CONFIRM_MS 45000
+/* R1.5.4：45s → 12s。设备可能在建图 + 刷一屏（15~25 秒）之后就直接回深睡，
+   45 秒那个窗口经常没走完就断电，bootloader 把新镜像标成 ABORTED 永久跳过 ——
+   用户看到的「刷了没变化」就是这么来的。确认动作本身只是写一次 otadata，
+   早确认换来的保护没有损失（起不了机的镜像照样在 12 秒前就崩给回滚兜底）。 */
+#define OTA_CONFIRM_MS 12000
 #define WEB_CHUNK      4096
 #define SNIFF_MIN      64      /* 判定前至少攒够的字节数（TCP 首段可能很短） */
 
@@ -177,19 +182,63 @@ static esp_err_t ota_stream(httpd_req_t *req, int pre)
     return ESP_OK;
 }
 
-/* 新固件跑稳 45s 后取消回滚。 */
+/* 新固件跑稳 OTA_CONFIRM_MS 后取消回滚。 */
+static bool s_ota_confirmed = false;
+
+void ota_web_confirm_flush(void)
+{
+    if (s_ota_confirmed) return;
+    s_ota_confirmed = true;
+    esp_err_t e = esp_ota_mark_app_valid_cancel_rollback();
+    /* ERROR 级是故意的：只有这一级能到 USB 控制台，而这一行是「本次镜像不会被
+       回滚」的唯一实机证据（R1.5.3 就是因为缺它被静默退回旧版）。 */
+    ESP_LOGE(TAG, "ota confirm -> %s", esp_err_to_name(e));
+}
+
 static void confirm_task(void *arg)
 {
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(OTA_CONFIRM_MS));
-    esp_err_t e = esp_ota_mark_app_valid_cancel_rollback();
-    ESP_LOGI(TAG, "OTA rollback cancel -> %s", esp_err_to_name(e));
+    ota_web_confirm_flush();
     vTaskDelete(NULL);
 }
 
 void ota_web_confirm(void)
 {
     xTaskCreate(confirm_task, "ota_confirm", 2048, NULL, 5, NULL);
+}
+
+/* ---- OTA 状态查询（/api/info 用，把「已被回滚」变成看得见的字段） ---- */
+
+static const char *state_name(esp_ota_img_states_t st)
+{
+    switch (st) {
+    case ESP_OTA_IMG_NEW:             return "NEW";      /* 首次启动，还没确认 */
+    case ESP_OTA_IMG_PENDING_VERIFY:  return "PENDING";  /* 自证窗口中，再重启即被作废 */
+    case ESP_OTA_IMG_VALID:           return "VALID";    /* 已确认，可无限启动 */
+    case ESP_OTA_IMG_INVALID:         return "INVALID";  /* 自判损坏，永不启动 */
+    case ESP_OTA_IMG_ABORTED:         return "ABORTED";  /* 没来得及确认，永不启动 */
+    default:                          return "UNDEFINED";
+    }
+}
+
+static void slot_state_name(const esp_partition_t *part, char *out, size_t outlen)
+{
+    if (!part) { snprintf(out, outlen, "-"); return; }
+    esp_ota_img_states_t st = ESP_OTA_IMG_UNDEFINED;
+    if (esp_ota_get_state_partition(part, &st) != ESP_OK) st = ESP_OTA_IMG_UNDEFINED;
+    snprintf(out, outlen, "%s", state_name(st));
+}
+
+void ota_web_status(ota_web_status_t *out)
+{
+    if (!out) return;
+    const esp_partition_t *run = esp_ota_get_running_partition();
+    const esp_partition_t *other = esp_ota_get_next_update_partition(NULL);
+    snprintf(out->run, sizeof(out->run), "%s", run ? run->label : "-");
+    snprintf(out->other, sizeof(out->other), "%s", other ? other->label : "-");
+    slot_state_name(run, out->state, sizeof(out->state));
+    slot_state_name(other, out->other_state, sizeof(out->other_state));
 }
 
 /* ---- 路径 2：控制页热更（写 web 分区）---- */

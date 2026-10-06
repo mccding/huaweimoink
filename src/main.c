@@ -43,6 +43,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_sleep.h"
@@ -162,25 +163,41 @@ static esp_err_t info_handler(httpd_req_t *req)
 {
     power_activity();
     const moink_settings_t *s = settings_get();
-    char buf[512];
+    char buf[640];
+    ota_web_status_t ost;
+    ota_web_status(&ost);
 
     /* ver = 统一版本号 = 当前生效页面版本（热更页优先，否则等于固件编译号）。
        fw  = 固件编译进去的号：仅供排障，以及判断「热更控制页是否落后于固件」
              （ver < fw 时页面给黄色警示），界面只显示 ver。
-       api 仍是帧格式契约号，与发布版本号解耦，页面状态栏另起一行显示。 */
+       api 仍是帧格式契约号，与发布版本号解耦，页面状态栏另起一行显示。
+       R1.5.4 新增三组排障字段：
+         heap_max / fb —— 最大连续空闲块与实际分到的帧缓冲；帧缓冲按画像分配后
+                          这两个数就是「离崩溃悬崖还有多远」的唯一可见度量
+                          （R1.5.3 的 120000 字节只差 1216 字节，直接 OOM 循环）。
+         ota_run/ota_state + ota_other/ota_other_state —— 把「上次升级其实被
+                          回滚了」变成页面能显示的证据：ABORTED/INVALID 的槽
+                          bootloader 永远不会选它，之前只能靠版本号猜。
+       a1_mode 取**驱动实际在用的档**，不是 NVS 里的意图：开机若拿不到 800x600
+       那块缓冲，frame_init 会把它退回默认档，页面必须按退回后的几何出图。 */
     int n = snprintf(buf, sizeof(buf),
         "{\"ver\":\"%s\",\"fw\":\"%s\",\"api\":%d,"
-        "\"panel\":\"%s\",\"a1_mode\":%u,\"heap\":%lu,\"bat_mv\":%d,"
+        "\"panel\":\"%s\",\"a1_mode\":%u,\"heap\":%lu,\"heap_max\":%lu,\"fb\":%lu,"
+        "\"bat_mv\":%d,"
         "\"sleep_s\":%lu,\"wake_s\":%lu,\"next_wake_s\":%lu,\"clients\":%d,"
-        "\"ssid\":\"%s\",\"sta_ip\":\"%s\",\"uptime\":%lld,\"store_slots\":%d}",
+        "\"ssid\":\"%s\",\"sta_ip\":\"%s\",\"uptime\":%lld,\"store_slots\":%d,"
+        "\"ota_run\":\"%s\",\"ota_state\":\"%s\",\"ota_other\":\"%s\",\"ota_other_state\":\"%s\"}",
         ota_web_page_version(), MOINK_VERSION, MOINK_API_VERSION,
-        epd_panel_name((epd_panel_t)s->panel), (unsigned)s->a1_mode,
-        (unsigned long)esp_get_free_heap_size(), power_battery_mv(),
+        epd_panel_name((epd_panel_t)s->panel), (unsigned)epd_get_a1_mode(),
+        (unsigned long)esp_get_free_heap_size(),
+        (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+        (unsigned long)frame_buf_len(), power_battery_mv(),
         (unsigned long)s->sleep_s, (unsigned long)s->wake_s,
         (unsigned long)power_next_wake_s(),
         netif_ap_client_count(), netif_ap_ssid(),
         netif_sta_ip() ? netif_sta_ip() : "",
-        (long long)(esp_timer_get_time() / 1000000), store_slots());
+        (long long)(esp_timer_get_time() / 1000000), store_slots(),
+        ost.run, ost.state, ost.other, ost.other_state);
     if (n < 0 || n >= (int)sizeof(buf)) buf[sizeof(buf) - 1] = '\0';
 
     httpd_resp_set_type(req, "application/json");
@@ -243,7 +260,14 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
         hflip_changed = true;
     }
     if (kv_get(body, "a1_mode", v, sizeof(v))) {
-        settings_set_a1_mode((uint8_t)atoi(v));
+        /* R1.5.4：帧缓冲现在按画像大小分配。对照档要 120000 字节连续内存，
+           开机时拿不到就只会有 105984（见 frame_init 的退回逻辑），这时必须
+           连驱动带设置一起拒收这一档 —— 否则页面按 800x600 传图、固件按几何
+           400 拒收，用户只看到「存了但没生效」。选回默认档或重启后自会重试。 */
+        uint8_t want = (uint8_t)atoi(v);
+        if (want == EPD_A1_MODE_NATIVE800 && frame_buf_len() < (EPD_A1N_W / 4) * EPD_A1N_H)
+            want = EPD_A1_MODE_SEQ552;
+        settings_set_a1_mode(want);
         /* 模式会改 A1 的画像几何（768x552 顺序 ↔ 800x600 原生对照），立即生效。 */
         epd_set_a1_mode(settings_get()->a1_mode);
     }
@@ -256,6 +280,10 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     }
     if (kv_get(body, "wake_s", v, sizeof(v))) {
         settings_set_wake((uint32_t)atoi(v));
+        /* 起点跟着新值走：热点节奏的基准原本只在开机时刷，若本次开机时 wake_s=0，
+           刚把间隔改成非 0 就会拿陈旧基准算出「已到期」，被 MIN_ARM_S 兜底成 30 秒。
+           power_mark_hotspot_wake() 自己判 wake_s>0，关成 0 时是空操作。 */
+        power_mark_hotspot_wake();
     }
 
     /* 热点凭据（FB-014①）：单字段可改 —— pass 键缺省 = 保持当前密码，
@@ -414,6 +442,7 @@ static void idle_monitor_task(void *arg)
     (void)arg;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
+        calendar_awake_tick();   /* 醒着也要换日：不依赖"睡前有没有武装定时器" */
         if (power_should_sleep()) {
             power_enter_deep_sleep();   /* 不返回 */
         }
@@ -486,12 +515,42 @@ void app_main(void)
 
     frame_init();
 
-    /* 定时唤醒路径（R1.5.0）：各节奏独立到期，只做到期的那件事，全程不起 WiFi。
+    /* R1.5.4：确认回滚窗口在 frame_init 之后立刻起算，不再等到 main 末尾。
+       下面这两条路都可能「不返回」：SNTP 最坏阻塞 34 秒 + 日历刷屏 15~25 秒，
+       定时自醒路径更是刷完就 power_enter_deep_sleep()。旧顺序（原来在这里才调）
+       让新镜像经常来不及自证 —— 一旦没确认，下次开机它就被标 ABORTED 永久回滚，
+       而页面上只看得到「版本还是旧的」，等于静默升级失败（R1.5.3 踩过）。
+       走到这一行 = 镜像已经能跑 app_main，回滚要防的是「根本起不来」，仍然有效。 */
+    ota_web_confirm();
+
+    /* 定时自醒 + 该校时（距上次校时 > 12 小时，或掉电后 RTC 回了 1970）：先临时起一次
+       WiFi 走 SNTP，再决定屏幕上该挂哪天。顺序不能反 —— RTC 走的是内部 RC 慢时钟（板上
+       没有 32.768 kHz 晶振），不校时「它的 00:01」会一天天前移，最后在大白天挂出明天；
+       而先按漂掉的时钟刷了再校正，就得白刷第二遍屏。
+       这里只起 WiFi：不起 HTTP、不进热点等待窗口，校完照旧立刻回睡（netif_ap_init 幂等，
+       后面正常启动路径再调一次不会重入）。 */
+    if (auto_wake && calendar_sntp_needed()) {
+        netif_ap_init();
+        calendar_sntp_run();            /* 阻塞但有超时，最坏约 34 秒 */
+    }
+
+    /* 屏和帧缓冲就绪后补日历：日历开着 + 时钟可用 → 刷当天（异步，方案 B）。
+       只有「从深睡醒来」（定时自醒 / 按键）才允许拿 NVS 的 cal_day 说「今天刷过了」：
+       那时屏上挂着的就是上次刷的东西。掉电 / 复位 / OTA 重启之后设备并不知道屏上是
+       什么（墨水屏双稳态会留着旧图，比如你手动推上去的待办），这时必须强制回屏一次，
+       否则同一天内断电重上电，日历就再也回不来了（R1.5.3①，实机踩到）。 */
+    /* 「屏上挂着什么未知」= 本次复位不是从深睡醒的。这里不能写 wake == 0：
+       esp_sleep_get_wakeup_causes() 对上电 / 硬复位返回 BIT(ESP_SLEEP_WAKEUP_UNDEFINED)，
+       而 UNDEFINED 是枚举 0 → 位图恒为 1，永远不等于 0（sleep_modes.c:2580）。旧写法让
+       这道 force 恒假，只要 NVS 的 cal_day 记着今天，掉电重上电就永远不回屏（R1.5.3①
+       实际从未生效，2026-10-06 实机定案）。 */
+    calendar_boot_catchup((wake & (1u << ESP_SLEEP_WAKEUP_UNDEFINED)) != 0);
+
+    /* 定时唤醒路径（R1.5.0）：各节奏独立到期，只做到期的那件事，默认不起 WiFi。
        换日时刻到期 → 先把日历改到当天；轮播换图到期 → 换一张上屏；
        若热点节奏同时未到期，立即回深睡。其余情形（热点到期 / 离线活失败）
        落回正常启动，起热点等人传图。
-       注：日历和轮播抢的是同一块屏 —— 同开时换日那天会被下一次换图盖掉，
-       页面对此有明示（见 docs/CONTRACT.md）。 */
+       注：日历和轮播互斥（R1.5.2，同一块屏只能有一个主人），不再存在「换日被换图盖掉」。 */
     if (auto_wake) {
         bool ticked = false;
         if (calendar_next_in_s() == 1) {            /* 1 = 换日时刻已到（见 calendar.h） */
@@ -512,6 +571,8 @@ void app_main(void)
         if (ticked && power_hotspot_in_s() != 1) {
             power_enter_deep_sleep();               /* 不返回 */
         }
+        /* 校时把时钟往回拉、换日其实还没到时，ticked 为假：落回正常启动（热点已起），
+           空闲窗口过后按校正过的时间重新武装。宁可多醒三分钟，也不在这里加第二条睡路。 */
     }
     power_mark_hotspot_wake();   /* 走到这里 = 本次开机要起热点，节奏起点挪到此刻 */
 
@@ -522,11 +583,13 @@ void app_main(void)
         ESP_LOGE(TAG, "HTTP server failed to start");
     }
 
+    /* 掉电 / 换电池后不必等人开页面：后台起一次性任务连 SNTP，把日期自己追平
+       （日历开着 + STA 已配时才起，见 calendar_sntp_needed）。 */
+    calendar_sntp_autostart();
+
     xTaskCreate(frame_task, "frame", 4096, NULL, 5, NULL);
     xTaskCreate(idle_monitor_task, "idle_mon", 3072, NULL, 4, NULL);
     xTaskCreate(button_task, "button", 3072, NULL, 4, NULL);
-
-    ota_web_confirm();
 
     ESP_LOGI(TAG, "ready: %s @ http://192.168.4.1%s%s (heap %lu)",
              netif_ap_ssid(),

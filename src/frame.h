@@ -20,7 +20,8 @@
  *
  * 载荷为 2bpp 位图（MSB 优先、行自下而上 = 180° 契约，与 epd_drv.c 一致），
  * 长度为 宽/4*高：768x552 → 105984；800x600 → 120000。
- * 固件按 hdr 里的宽高判定布局，两种几何都接受（见 epd_frame_geom_ok）。
+ * 固件按 hdr 里的宽高判定布局。800x600 载荷只在 a1_mode 2（对照档）被接受，
+ * 且缓冲必须真的有 120000 字节（见 epd_frame_geom_ok 与 frame_init）。
  */
 
 #define FRAME_HDR_LEN    16
@@ -29,8 +30,15 @@
 #define FRAME_FMT_VERSION 1          /* 基础格式（768x552 载荷） */
 #define FRAME_FMT_VERSION_NATIVE 2   /* A1 原生 800x600 载荷 */
 
-/* 分配帧缓冲并创建同步量。 */
+/*
+ * 分配帧缓冲（按当前面板画像，R1.5.4 起不再是编译期最大帧）并创建同步量。
+ * 分配失败时不重启、不 abort：缓冲留空，所有显示入口自行拒绝，设备照常启动
+ * —— 启动期 abort 会被 bootloader 判成坏镜像并静默回滚 OTA（R1.5.3 踩过）。
+ */
 void frame_init(void);
+
+/* 缓冲实际容量（字节）；frame_init 失败时为 0。写缓冲的路径都以此为上界。 */
+size_t frame_buf_len(void);
 
 /* 阻塞等待一个显示事件（上传完成 / 槽位排队）。 */
 void frame_wait(void);
@@ -58,7 +66,7 @@ esp_err_t frame_upload_handler(httpd_req_t *req);
  */
 int frame_recv_locked(httpd_req_t *req, uint16_t *w, uint16_t *h, uint32_t *len);
 void frame_unlock(void);
-uint8_t *frame_buf(void);
+uint8_t *frame_buf(void);        /* 缓冲未就绪时返回 NULL，调用方必须判空 */
 int frame_show_slot(uint8_t slot);
 void frame_queue_slot(uint8_t slot);
 int frame_display_pending(void);

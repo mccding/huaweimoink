@@ -4,6 +4,8 @@
 
 #include "calendar.h"
 #include "carousel.h"
+#include "netif_ap.h"
+#include "ota_web.h"
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_attr.h"
@@ -132,6 +134,12 @@ bool power_should_sleep(void)
 
 void power_enter_deep_sleep(void)
 {
+    /* R1.5.4：睡 = 一次彻底重启。新镜像还没自证就睡下，下次开机 bootloader
+       会把它标 ABORTED 永久回滚（R1.5.3 定时自醒路径实机踩过），所以睡前必须
+       把确认窗口结掉。已确认时这里是空操作。 */
+    ota_web_confirm_flush();
+    /* 先立闸门：esp_wifi_stop() 会抛 STA_DISCONNECTED，回调若去重连会 abort（R1.5.0）。 */
+    netif_sta_suspend_begin();
     esp_wifi_stop();
     epd_panel_deep_sleep();
 

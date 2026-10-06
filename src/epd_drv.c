@@ -592,8 +592,9 @@ int epd_display_2bpp(const uint8_t *frame)
 }
 
 /*
- * 帧几何校验：A0 只认自身画像尺寸；A1 两种几何都收
- * （768x552 = 默认档 SEQ552，800x600 = 对照档 NATIVE800）。
+ * 帧几何校验：A0 只认自身画像尺寸；A1 的 768x552 两档都收（日历恒用
+ * 768x552），800x600 只认对照档 —— R1.5.4 起帧缓冲按画像大小分配，
+ * 默认档那块只有 105984 字节，收下 120000 字节帧等于把堆写穿。
  */
 bool epd_frame_geom_ok(uint16_t w, uint16_t h, uint32_t len)
 {
@@ -601,6 +602,7 @@ bool epd_frame_geom_ok(uint16_t w, uint16_t h, uint32_t len)
     if (s_panel != EPD_PANEL_A1) return false;
     if (w == EPD_A1_W && h == EPD_A1_H &&
         len == (uint32_t)(EPD_A1_W / 4) * EPD_A1_H) return true;
+    if (s_a1_mode != EPD_A1_MODE_NATIVE800) return false;
     if (w == EPD_A1N_W && h == EPD_A1N_H &&
         len == (uint32_t)(EPD_A1N_W / 4) * EPD_A1N_H) return true;
     return false;

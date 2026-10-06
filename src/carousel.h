@@ -20,6 +20,8 @@
  *   - cur 语义 = 最近一次显示的「显示序下标」；下一张 = cur 的一后继：顺序模式
  *     (cur+1)%n，随机模式 esp_random()%n 且重掷直到 != cur。
  *   - 删除只摘列表不擦槽：物理槽随轮转分配（car_wseq）自然复用，磨损摊匀。
+ *   - 与日历互斥（R1.5.2）：一块屏只能有一个主人。打开轮播时服务端顺手关掉日历
+ *     （calendar_set_off），反之亦然；关轮播不碰日历，删帧也不碰日历。
  *   - 升级保留 / 出厂清空：settings_reset_for_upgrade 不动 car_*（含 car_int_s）；
  *     恢复出厂走 carousel_factory_wipe() 擦掉全部帧槽。
  *
@@ -32,6 +34,13 @@ void carousel_init(void);
 
 /* 开关已开且至少有一张可播。 */
 int carousel_enabled(void);
+
+/* 轮播开关本身（car_on），不判断有没有帧 —— 互斥提示要区分「开着但空列表」。 */
+int carousel_switch_on(void);
+
+/* 关掉轮播开关并落 NVS —— 日历被打开时的互斥副作用（两者抢同一块屏），只改配置
+   不动屏、不删帧。返回 1 = 本次真的从「开」变「关」。 */
+int carousel_set_off(void);
 
 /* 换图节奏上下限（秒），也是 /api/carousel/cfg 的 int_s 校验范围；0 = 不参与定时。 */
 #define CAR_INT_MIN_S  60

@@ -109,12 +109,18 @@ int store_slot_peek(uint8_t slot, store_meta_t *meta)
     return 0;
 }
 
-int store_slot_read(uint8_t slot, uint8_t *buf, store_meta_t *meta)
+int store_slot_read(uint8_t slot, uint8_t *buf, size_t cap, store_meta_t *meta)
 {
     store_meta_t m;
     if (store_slot_peek(slot, &m) != 0) return -1;
 
     if (buf) {
+        /* 缓冲是按画像分配的，可能装不下这一槽 —— 越界写会把堆直接写坏。 */
+        if (m.len > cap) {
+            ESP_LOGE(TAG, "slot %u holds %lu bytes, buffer only %u", slot,
+                     (unsigned long)m.len, (unsigned)cap);
+            return -1;
+        }
         uint32_t off = slot_off(slot) + STORE_HDR_LEN;
         if (esp_partition_read(s_part, off, buf, m.len) != ESP_OK) return -1;
         if (crc16_update(0xFFFF, buf, m.len) != m.crc) return -1;

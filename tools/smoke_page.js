@@ -582,10 +582,11 @@ ok("R1.5.0 不休眠语义说明（有节奏时空闲仍会睡，否则定时器
      && js.indexOf("但设备日期还没同步") >= 0
      && js.indexOf("设置未变化，无需保存") >= 0
      && js.indexOf("/no changes/.test(e.text") >= 0);
-  ok("R1.5.0 日历与轮播抢屏 / 「开日历不抢屏」两处诚实说明",
-     page.includes("两者会互相盖掉对方刚上屏的画面")
-     && page.includes("开启自动改日期") && page.includes("不会</b>立刻改掉当前画面")
-     && js.indexOf("但轮播也开着 —— 两者会互相盖屏") >= 0);
+  ok("R1.5.0 日历与轮播抢屏：R1.5.2 起改由设备端互斥解决（旧「互相盖屏 / 不抢屏」文案已撤）",
+     page.indexOf("两者会互相盖掉对方刚上屏的画面") < 0
+     && page.indexOf("不会</b>立刻改掉当前画面") < 0
+     && js.indexOf("但轮播也开着 —— 两者会互相盖屏") < 0
+     && page.indexOf("只能有一个主人") >= 0);
   ok("R1.5.0 日历控件与就地反馈齐备（含 label for / 本地预览守卫 / 启动回显）",
      page.includes('id="calBox"') && page.includes('id="calTod" class="tod" value="00:01"')
      && ["calOn", "calNow", "calNext", "calcfgmsg", "calmsg"].every(function(id){
@@ -1050,6 +1051,106 @@ ok("R1.5.0 日历仍留在设置页（首页只放三个内容 tab）",
    && page.indexOf('<details id="calBox">') > page.indexOf('<div id="tab-device"'));
 ok("R1.5.0 轮播取图的提示改口到「拍立得」页",
    js.indexOf('carPill("err", "✗ 请先在「拍立得」页选择图片")') >= 0);
+
+/* ---------- R1.5.2：自动校时（tz + SNTP 回显）+ 日历/轮播互斥 ---------- */
+ok("R1.5.2 推日期时把手机时区一起送给设备（tz_min = -getTimezoneOffset）",
+   js.indexOf('body: "t=" + calWallPack() + "&tz_min=" + (-new Date().getTimezoneOffset())') >= 0);
+ok("R1.5.2 同步成功的药丸里回显已落盘的时区（旧固件无 tz_min 则不说）",
+   js.indexOf('(j.tz_min == null ? "" : " · 时区 " + fmtTz(j.tz_min) + " 已写入（自动校时用）")') >= 0);
+ok("R1.5.2 fmtTz：东正西负 + 支持半小时偏移",
+   js.indexOf("function fmtTz(min){") >= 0
+   && js.indexOf('return "UTC" + (m < 0 ? "-" : "+") + Math.floor(a / 60)') >= 0);
+ok("R1.5.2 新增「自动校时」回显行 #calSntp，并由 calShowState 三态填写",
+   page.includes('id="calSntp"')
+   && js.indexOf('var now = $("calNow"), next = $("calNext"), sn = $("calSntp");') >= 0
+   && js.indexOf('sn.textContent = tz + " · 日历关着时不自动校时"') >= 0
+   && js.indexOf('sn.textContent = tz + " · 尚未自动校时（下次醒来时补）"') >= 0
+   && js.indexOf('"前自动校过时"') >= 0);
+ok("R1.5.2 旧固件（应答无 tz_min/sntp_at）不说「尚未自动校时」，改说需 R1.5.2",
+   js.indexOf('if (j.tz_min == null && j.sntp_at == null) sn.textContent = "此设备固件不含自动校时（需 R1.5.2 及以上）";') >= 0);
+ok("R1.5.2 校时回显在读取失败 / 本地预览两条路上一起复位",
+   js.indexOf('if (sn) sn.textContent = "本地预览（未连设备）";') >= 0
+   && js.indexOf('if (sn) sn.textContent = "—";') >= 0);
+ok("R1.5.2 日历保存：设备回 car_off 才算真关掉轮播，页面跟着重读轮播状态",
+   js.indexOf('if (j.car_off) carRefresh();') >= 0
+   && js.indexOf('(j.car_off ? " · 相册轮播已自动关闭（这块屏交给日历）" : "")') >= 0);
+ok("R1.5.2 日历刚被打开时说明「今天这张正在上屏」，不再让用户自己点「立即显示今天」",
+   js.indexOf("var turnedOn = !!wantOn && !!calLast && !calLast.on;") >= 0
+   && js.indexOf('(turnedOn ? " · 今天这张正在上屏（约 15~25 秒）"') >= 0);
+ok("R1.5.2 轮播保存：留住 cfg 应答里的 cal_off（list 回读不带它），并回显 + 重读日历",
+   js.indexOf("j.cal_off = (c && c.cal_off) ? 1 : 0;") >= 0
+   && js.indexOf('var mutex = j.cal_off ? " · 日历已自动关闭（同一块屏只让一个主人用）" : "";') >= 0
+   && js.indexOf("if (j.cal_off) calRefresh();") >= 0);
+ok("R1.5.2 互斥落地：旧的「两者会互相盖屏 / 建议二选一」文案全部删除",
+   page.indexOf("互相盖") < 0 && page.indexOf("建议二选一") < 0);
+ok("R1.5.2 两处提示各自说明互斥由设备自动完成",
+   page.indexOf("<b>开一个，另一个自动被关掉</b>") >= 0
+   && page.indexOf("<b>打开轮播，日历会被设备自动关掉</b>") >= 0);
+ok("R1.5.2 提示讲清自动校时链路（NTP 服务器 + 12 小时闸 + UDP 123）",
+   page.indexOf("ntp.aliyun.com") >= 0 && page.indexOf("cn.pool.ntp.org") >= 0
+   && page.indexOf("距上次校时满 12 小时") >= 0 && page.indexOf("UDP 123") >= 0);
+ok("R1.5.2 掉电未同步的警告改口：自己会校，不必手动",
+   js.indexOf("开着「启用联网」时它下次醒来也会自己校时") >= 0);
+ok("R1.5.3 未同步那行改口成退避重试（转述 next_in_s + ntp_try）",
+   js.indexOf("后自己再试校时") >= 0 && js.indexOf("j.ntp_try") >= 0
+   && js.indexOf("已连续失败") >= 0);
+ok("R1.5.3 旧固件降级：没有 ntp_try 字段时不谎报排期",
+   js.indexOf('if (j.ntp_try == null) next.textContent = "⚠ 日期没同步时不会自动改日期"') >= 0);
+ok("R1.5.3 没配联网时说明白「不会自动改日期」",
+   js.indexOf("没配「启用联网」，不会自动改日期") >= 0);
+ok("R1.5.3 hint 讲清退避阶梯 + 开机强制回屏的理由",
+   page.indexOf("1→2→4→8→12 小时退避") >= 0
+   && page.indexOf("强制把当天日历回屏一次") >= 0);
+/* ---------- R1.5.4：OTA 回滚可见 + 帧缓冲读数（页面侧）---------- */
+eq("R1.5.4 otaNote 旧固件无 ota_run 时不渲染", String(sandbox.otaNote({ heap: 1 })), "null");
+var oAb = sandbox.otaNote({ ota_run:"ota_0", ota_state:"VALID",
+                            ota_other:"ota_1", ota_other_state:"ABORTED" });
+ok("R1.5.4 otaNote 另一槽 ABORTED → err，点名被回滚的槽与现跑槽",
+   oAb.kind === "err" && oAb.text.indexOf("ota_1") >= 0
+   && oAb.text.indexOf("已被自动退回") >= 0 && oAb.text.indexOf("ota_0") >= 0);
+ok("R1.5.4 otaNote INVALID 与 ABORTED 同口径",
+   sandbox.otaNote({ ota_run:"ota_0", ota_other_state:"INVALID" }).kind === "err");
+var oPend = sandbox.otaNote({ ota_run:"ota_1", ota_state:"PENDING" });
+ok("R1.5.4 otaNote 自证窗口内 → warn + 别断电",
+   oPend.kind === "warn" && oPend.text.indexOf("别断电") >= 0);
+ok("R1.5.4 otaNote NEW 也算未确认",
+   sandbox.otaNote({ ota_run:"ota_1", ota_state:"NEW" }).kind === "warn");
+var oValid = sandbox.otaNote({ ota_run:"ota_0", ota_state:"VALID",
+                               ota_other:"ota_1", ota_other_state:"UNDEFINED" });
+ok("R1.5.4 otaNote 正常态 → ok 且不带告警字样",
+   oValid.kind === "ok" && oValid.text.indexOf("不会被回滚") >= 0);
+ok("R1.5.4 帧缓冲读数上屏（#i-fb + heap_max 进 title + fb=0 红字）",
+   page.includes('id="i-fb"') && js.indexOf('$("i-fb")') >= 0
+   && js.indexOf("j.heap_max") >= 0 && js.indexOf("if (j.fb > 0)") >= 0
+   && js.indexOf('j.fb === 0') >= 0);
+ok("R1.5.4 升级状态药丸接线（#otaState，样式先复位再按 kind 上色）",
+   page.includes('id="otaState"') && js.indexOf('oEl.className = "savestate"') >= 0
+   && js.indexOf("oEl.classList.add(oNote.kind)") >= 0);
+ok("R1.5.4 旧固件无 ota 字段时药丸显示「—」并注明，而不是留空",
+   js.indexOf('oEl.textContent = oNote ? oNote.text : "\u2014"') >= 0
+   && js.indexOf("旧固件不上报这一项") >= 0);
+ok("R1.5.4 维护区讲清自证窗口 + 回滚不报错这件事",
+   page.indexOf("12 秒") >= 0 && page.indexOf("<b>不报错</b>") >= 0
+   && page.indexOf("请重新升级") >= 0);
+
+/* ---------- R1.5.5：日历卡片补读（页面侧唯一的日历假阴性修补）---------- */
+ok("R1.5.5 开页只补读一次，治 sntp_at 单调量造成的「尚未自动校时」假阴性",
+   js.indexOf("var calReread = false;") >= 0
+   && js.indexOf("if (!calReread && j.on && !(+j.sntp_at > 0)) {") >= 0
+   && js.indexOf("calReread = true; setTimeout(calRefresh, 12000);") >= 0);
+ok("R1.5.5 补读排在「未同步就补推一次」之前，且写明不许轮询（每次请求都喂 power_activity）",
+   js.indexOf("calReread = true; setTimeout(calRefresh, 12000);")
+   < js.indexOf("if (!j.synced) return calPush(true);")
+   && js.indexOf("轮询会把深睡彻底废掉") >= 0);
+
+ok("R1.5.5 版本号两处一致（页面 meta 与断言基线）",
+   page.includes('<meta name="moink-page-version" content="R1.5.5">'));
+
+ok("R1.5.5 校时机制长文收进折叠块，常驻只留一句「不必手动同步」",
+   page.indexOf("<summary>校时的原理与边界（一般不用读）</summary>") >= 0
+   && page.indexOf("开机、到点自醒都是先校时、再决定要不要换日") >= 0
+   && page.indexOf("ntp.aliyun.com") > page.indexOf("校时的原理与边界")
+   && page.indexOf("1→2→4→8→12 小时退避") > page.indexOf("校时的原理与边界"));
 
 console.log(failed === 0 ? "SMOKE: ALL PASS" : ("SMOKE: " + failed + " FAILED"));
 process.exit(failed === 0 ? 0 : 1);

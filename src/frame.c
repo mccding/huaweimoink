@@ -3,6 +3,7 @@
 #include "power.h"
 #include "store.h"
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -13,6 +14,10 @@
 static const char *TAG = "frame";
 
 static uint8_t *s_fb = NULL;
+/* 实际分配到的容量（字节），不是编译期上限：A1 原生 800x600 那一档在 C3 上
+   可能拿不到整块连续内存（见 frame_init），此时它退回 768x552。所有写 s_fb
+   的路径都必须拿它当上界。 */
+static size_t s_fb_len = 0;
 static SemaphoreHandle_t s_fb_mutex = NULL;
 static SemaphoreHandle_t s_frame_ready = NULL;
 
@@ -36,19 +41,57 @@ static uint16_t crc16_update(uint16_t crc, const uint8_t *d, size_t n)
     return crc;
 }
 
+/* 768x552 @2bpp —— A0 与 A1 默认档都要这么多，也是 C3 上稳拿到的尺寸。 */
+#define FB_LEN_SEQ552   (EPD_A1_W / 4 * EPD_A1_H)
+
 void frame_init(void)
 {
-    s_fb = malloc(EPD_MAX_BUF_LEN);
-    if (!s_fb) {
-        ESP_LOGE(TAG, "OOM allocating %d-byte frame buffer", EPD_MAX_BUF_LEN);
-        abort();
+    /* R1.5.4：按当前画像分配，不再按编译期最大帧（EPD_MAX_BUF_LEN = 800x600
+       的 120000）分配。实机堆表（336 ms，崩溃前）：
+         [0x3fc9de30, 0x3fcc0000) 139728 B，最大连续 118784 B
+         [0x3fcc0000, ...)        116496 B，最大连续 114688 B —— 类型不同，分配器不合并
+       所以 120000 这一档物理上根本拿不到：R1.5.0 只是靠 .bss 少 1296 字节
+       （最大连续 = 120080）富余 80 字节侥幸活着，日历那些静态数据一涨就翻车。 */
+    size_t want = epd_profile()->buf_len;
+    if (want > STORE_FRAME_MAX) want = STORE_FRAME_MAX;
+
+    s_fb = malloc(want);
+    if (!s_fb && want > FB_LEN_SEQ552) {
+        s_fb = malloc(FB_LEN_SEQ552);
+        if (s_fb) {
+            /* 对照档要不起缓冲 —— 退回默认档，宁可得罪 800x600 也不能不开机。 */
+            want = FB_LEN_SEQ552;
+            epd_set_a1_mode(EPD_A1_MODE_SEQ552);
+            ESP_LOGE(TAG, "800x600 buffer unavailable, A1 drive mode forced to seq552");
+        }
     }
+
+    /* 锁与信号量无论如何都建：显示任务在 frame_wait() 上要它们，
+       缺缓冲时靠 s_fb==NULL 在各入口拒活，不能让它拿空句柄。 */
     s_fb_mutex = xSemaphoreCreateMutex();
     s_frame_ready = xSemaphoreCreateBinary();
+    if (!s_fb) {
+        /* 绝不 abort()：R1.5.3 的教训是启动期 abort = 崩溃循环 = 新固件被
+           bootloader 标 ABORTED 静默回滚，用户只看到「刷了没变化」。
+           设备必须活着把错误报给控制页。 */
+        ESP_LOGE(TAG, "frame buffer unavailable (%u B), display disabled",
+                 (unsigned)want);
+        return;
+    }
+    s_fb_len = want;
     s_fw = epd_profile()->w;
     s_fh = epd_profile()->h;
-    ESP_LOGI(TAG, "frame buffer %d bytes ready (profile %ux%u)",
-             EPD_MAX_BUF_LEN, (unsigned)s_fw, (unsigned)s_fh);
+    /* ERROR 级是故意的：控制台日志只放行 ERROR/WARN（CONFIG_LOG_DEFAULT_LEVEL），
+       这一行是以后每次实机排障都能读到「离悬崖还有多远」的唯一入口。 */
+    ESP_LOGE(TAG, "boot stat: fb %u bytes, free heap %u, largest block %u",
+             (unsigned)s_fb_len,
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
+
+size_t frame_buf_len(void)
+{
+    return s_fb_len;
 }
 
 void frame_wait(void)
@@ -60,6 +103,7 @@ void frame_wait(void)
    显示任务内部使用；外部触发走 frame_queue_slot()。 */
 static int frame_display_now(void)
 {
+    if (!s_fb) return -1;
     if (xSemaphoreTake(s_fb_mutex, portMAX_DELAY) != pdTRUE) return -1;
     int r = epd_display_2bpp_wh(s_fb, s_fw, s_fh);
     xSemaphoreGive(s_fb_mutex);
@@ -94,10 +138,13 @@ uint8_t *frame_buf(void)
    （调用方必须 frame_unlock()）；失败返回负值，锁已释放、响应已发出。 */
 int frame_recv_locked(httpd_req_t *req, uint16_t *w, uint16_t *h, uint32_t *len)
 {
-    /* R1.1.0：先按最大合法载荷粗筛（A1 原生 800x600 = 120000），细筛在读头后
-       按 hdr 里的宽高做——A1 允许 768x552 与 800x600 两种帧。 */
+    /* 粗筛按**实际分配到的**容量，不按编译期上限 —— 缓冲可能比 120000 小。 */
+    if (!s_fb) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no frame buffer");
+        return -1;
+    }
     if (req->content_len < (int)(FRAME_HDR_LEN + 1) ||
-        req->content_len > (int)(FRAME_HDR_LEN + EPD_MAX_BUF_LEN)) {
+        req->content_len > (int)(FRAME_HDR_LEN + s_fb_len)) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "size mismatch");
         return -1;
     }
@@ -199,10 +246,13 @@ esp_err_t frame_upload_handler(httpd_req_t *req)
 
 int frame_show_slot(uint8_t slot)
 {
+    if (!s_fb) return -1;
     if (xSemaphoreTake(s_fb_mutex, portMAX_DELAY) != pdTRUE) return -1;
 
     store_meta_t m;
-    int r = store_slot_read(slot, s_fb, &m);
+    /* 容量交给 store：老槽里可能存着 120000 字节的 800x600 帧，当前缓冲装不下
+       时必须拒读，而不是把 s_fb 越界写穿堆。 */
+    int r = store_slot_read(slot, s_fb, s_fb_len, &m);
     if (r == 0) {
         s_fw = m.w;
         s_fh = m.h;
@@ -244,6 +294,14 @@ int frame_display_pending(void)
 static int render_once(uint16_t w, uint16_t h, frame_draw_fn draw, void *user, int async)
 {
     uint32_t len = (uint32_t)(w / 4) * (uint32_t)h;
+    if (!s_fb) {
+        ESP_LOGE(TAG, "render: no frame buffer, refusing %ux%u", (unsigned)w, (unsigned)h);
+        return -1;
+    }
+    if (len > s_fb_len) {
+        ESP_LOGE(TAG, "render: %u bytes exceeds buffer %u", (unsigned)len, (unsigned)s_fb_len);
+        return -1;
+    }
     if ((w & 3) || !epd_frame_geom_ok(w, h, len)) {
         ESP_LOGW(TAG, "render: unsupported geometry %ux%u", (unsigned)w, (unsigned)h);
         return -1;

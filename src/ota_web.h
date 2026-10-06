@@ -15,8 +15,9 @@
  *
  * 升级行为：
  *   - 固件：写另一 OTA 槽 -> 校验 -> 强制重置设置（保留热点凭据）+ 清除页面热更
- *           标记（页面随固件一起换新）-> 切槽重启；新固件跑稳 45s 才取消回滚，
- *           失败自动回滚。
+ *           标记（页面随固件一起换新）-> 切槽重启；新固件跑稳 12s 取消回滚，
+ *           确认之前任何一次重启都会被 bootloader 判成 ABORTED 并静默回滚，
+ *           所以睡前必须先 ota_web_confirm_flush()（见下）。
  *   - 页面：写 web 分区（带 CRC32）+ 记录页面 meta 版本；不重启，刷新浏览器即可。
  *
  * 不做向后兼容：R1.1.x 的 /api/ota、/api/web 两条路由与 ?sync_page 参数已删除。
@@ -25,8 +26,26 @@
 /* 注册 /api/upload 与 /api/web/clear 路由。 */
 void ota_web_register(httpd_handle_t server);
 
-/* 上电后调用：跑稳 45s 取消回滚（无回滚待确认时是无害空操作）。 */
+/* 上电后调用：跑稳 12s 取消回滚（无回滚待确认时是无害空操作）。 */
 void ota_web_confirm(void);
+
+/*
+ * 立刻确认（幂等）。深睡入口必须调用：esp_deep_sleep_start() 不返回，
+ * 确认任务的那 12 秒还没走完就睡下 = 下次开机镜像被标 ABORTED 永久回滚
+ * （R1.5.3 实机踩过：定时自醒刷完日历 2 秒就回睡）。
+ */
+void ota_web_confirm_flush(void);
+
+/* OTA 槽状态快照（字符串化，供 /api/info 直接拼 JSON）。
+   run/other 各 17 = esp_partition_t.label 的长度 + 结束符。 */
+typedef struct {
+    char run[17];          /* 当前运行槽，如 "ota_0" */
+    char state[16];        /* 运行镜像状态：NEW/PENDING/VALID/INVALID/ABORTED/UNDEFINED */
+    char other[17];        /* 另一个槽 */
+    char other_state[16];  /* 另一槽状态：ABORTED = 上次升级已被回滚 */
+} ota_web_status_t;
+
+void ota_web_status(ota_web_status_t *out);
 
 /* web 分区是否存在已上传页面。 */
 bool ota_web_has_page(void);

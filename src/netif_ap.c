@@ -27,6 +27,7 @@ static char s_ssid[SETT_SSID_MAX];
 
 /* STA 运行态：是否有 IP、点分地址字符串。 */
 static volatile bool s_sta_up = false;
+static volatile bool s_suspending = false;   /* 入睡流程中：见 netif_sta_suspend_begin */
 static char s_sta_ip[16] = "";
 
 void netif_ap_apply_tx_power(void)
@@ -66,13 +67,22 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_sta_up = false;
         s_sta_ip[0] = '\0';
+        /* 深睡流程自己停的 WiFi：不重连（此时 WiFi 驱动已停，重连必失败）。 */
+        if (s_suspending) return;
         /* 掉线自动重连：仅当 STA 仍处于启用状态时。 */
         const moink_settings_t *s = settings_get();
         if (s->sta_enable && s->sta_ssid[0]) {
             ESP_LOGW(TAG, "STA disconnected, reconnecting in %d ms", STA_RETRY_MS);
-            ESP_ERROR_CHECK(esp_wifi_connect());
+            esp_err_t e = esp_wifi_connect();
+            if (e != ESP_OK)
+                ESP_LOGW(TAG, "STA reconnect failed: %s", esp_err_to_name(e));
         }
     }
+}
+
+void netif_sta_suspend_begin(void)
+{
+    s_suspending = true;
 }
 
 static void build_ssid(char *out, size_t n)
@@ -89,6 +99,11 @@ static void build_ssid(char *out, size_t n)
 
 void netif_ap_init(void)
 {
+    /* 幂等（R1.5.2）：定时自醒路径可能已经为了 SNTP 校时起过一次 WiFi，第二次调用
+       必须直接返回 —— esp_event_loop_create_default() 重复调用返回 INVALID_STATE，
+       下面的 ESP_ERROR_CHECK 会 abort 重启。 */
+    if (s_ap) return;
+
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 

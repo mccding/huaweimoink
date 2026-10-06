@@ -131,8 +131,9 @@ int epd_display_2bpp_wh(const uint8_t *frame, uint16_t w, uint16_t h);
 /*
  * 校验帧几何是否被当前画像 / 模式接受。
  *   A0：只接受自身画像尺寸；
- *   A1：768x552（1 SEQ552 默认档）与 800x600（2 NATIVE800 对照档）都收，
- *       载荷长度必须与几何自洽。
+ *   A1：768x552 两档都收（日历恒用这一几何）；800x600 只在 a1_mode 2
+ *       （NATIVE800 对照档）收 —— 默认档的帧缓冲按 768x552 分配，
+ *       收下 800x600 载荷会越界写堆。载荷长度必须与几何自洽。
  */
 bool epd_frame_geom_ok(uint16_t w, uint16_t h, uint32_t len);
 

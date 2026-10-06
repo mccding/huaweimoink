@@ -42,8 +42,10 @@ int store_slots(void);
 /* 读槽头并做几何自洽校验（不读载荷、不验 CRC）。0 = 槽内有帧。 */
 int store_slot_peek(uint8_t slot, store_meta_t *meta);
 
-/* 读整槽：头 + 载荷 + CRC 全验。buf 容量须 >= STORE_FRAME_MAX。0 = 有效。 */
-int store_slot_read(uint8_t slot, uint8_t *buf, store_meta_t *meta);
+/* 读整槽：头 + 载荷 + CRC 全验。cap = buf 实际容量，槽内帧大于 cap 时拒读并返回
+   -1（R1.5.4：帧缓冲按画像分配，可能小于 STORE_FRAME_MAX；老槽里可能存着更大的帧）。
+   0 = 有效。 */
+int store_slot_read(uint8_t slot, uint8_t *buf, size_t cap, store_meta_t *meta);
 
 /* 整槽重写：擦槽 -> 写载荷 -> 写头 -> 读回校验。0 = 成功。
    先载荷后头的顺序保证断电中断只会留下「无头空槽」，不会出现

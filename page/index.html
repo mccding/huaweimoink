@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="moink-page-version" content="R1.5.0">
+<meta name="moink-page-version" content="R1.5.5">
 <title>墨印 · MoInk</title>
 <style>
 /* ===== Cropper.js v1.6.2 | MIT | https://github.com/fengyuanchen/cropperjs ===== */
@@ -450,6 +450,7 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
     </div>
     <div id="carList"></div>
     <div class="hint">换图间隔与「自动唤醒」各自独立计时：到点设备自己醒来、显示下一张后回深睡（不启动热点、不耗连网时间）。手动「立即换下一张」会把下一次自动换图顺延一个完整间隔。画面存在设备内部，升级固件不丢；恢复出厂或长按按键会一并清空。</div>
+    <div class="hint">轮播与「日历自动改日期」用同一块屏，只能有一个主人：<b>打开轮播，日历会被设备自动关掉</b>（反过来开日历也一样），不必自己手动去关另一个。</div>
   </section>
 
   </div><!-- /tab-image -->
@@ -465,6 +466,7 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
       <div><span>当前热点</span><b id="i-ssid">—</b></div>
       <div><span>局域网 IP</span><b id="i-staip">—</b></div>
       <div><span>空闲内存</span><b id="i-heap">—</b></div>
+      <div><span>帧缓冲</span><b id="i-fb">—</b></div>
       <div><span>电池</span><b id="i-bat">—</b></div>
       <div><span>在线设备</span><b id="i-clients">—</b></div>
     </div>
@@ -586,15 +588,24 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
       <label>下次改日期</label>
       <span class="hint" style="margin:0" id="calNext">—</span>
     </div>
+    <div class="row">
+      <label>自动校时</label>
+      <span class="hint" style="margin:0" id="calSntp">—</span>
+    </div>
     <div class="row"><button class="mini" id="calSaveCfg">保存日历设置</button><span class="savestate" id="calcfgmsg"></span></div>
     <div class="row" style="margin-top:12px">
       <button class="mini" id="calSync">同步今天日期</button>
       <button class="mini" id="calShow">立即显示今天</button>
       <span class="savestate" id="calmsg"></span>
     </div>
-    <div class="hint">日历读的是设备自己的走时：点「同步今天日期」把手机屏幕上的日期推过去，之后靠 RTC 自己走、跨深睡有效，每天到点自己换页。设备掉电重上电后会回到 1970 —— 那时它不会自动改日期，重新同步一次即可。</div>
-    <div class="hint">开启自动改日期<b>不会</b>立刻改掉当前画面：第一张日历由你点「立即显示今天」上屏（整屏刷新约 15~25 秒，期间页面操作会变慢），之后每个换日时刻设备自己刷。</div>
-    <div class="hint">与「相册轮播」同时开启时，同一次唤醒只显示一件事（日历优先）：两者会互相盖掉对方刚上屏的画面，建议二选一。</div>
+    <div class="hint">开着「启用联网」时，设备自己把日期校准，<b>不必</b>再手动点「同步今天日期」：开机、到点自醒都是先校时、再决定要不要换日。</div>
+    <details>
+      <summary>校时的原理与边界（一般不用读）</summary>
+    <div class="hint">日历读的是设备自己的走时：点「同步今天日期」把手机屏幕上的日期和时区一起推过去，之后靠 RTC 自己走、跨深睡有效，每天到点自己换页。设备掉电重上电后时钟回到 1970，<b>不用</b>再手动同步：只要「启用联网」是开的，它会自己找 NTP 服务器（ntp.aliyun.com，失败再试 cn.pool.ntp.org）按手机时区校好；到点自醒那次也在刷日历前先校时。距上次校时满 12 小时才再校一次，路由器需放行 UDP 123。一次也没校上时设备不会就此睡死：按 <b>1→2→4→8→12 小时退避</b>自己醒来重试，网络恢复后日期自己追平。掉电 / 复位 / 升级后的那次开机还会强制把当天日历回屏一次 —— 屏上留着的是旧图（墨水屏断电不掉），而设备看不见它。</div>
+    <div class="hint">内部 RC 走时有漂移（一天约半分钟），不校时的话「它的 00:01」会一天天往前挪，最后在大白天挂出明天的日期 —— 自动校时就是为这件事加的。校准放在判到期之前，所以是否真的换日按校正后的时间决定。</div>
+    </details>
+    <div class="hint">开着日历时第一次点「保存日历设置」会立刻把当天刷上屏（整屏刷新约 15~25 秒，期间页面操作会变慢），之后每个换日时刻设备自己刷；只改语言 / 样式也是立刻重排当前画面。</div>
+    <div class="hint">日历与「相册轮播」抢同一块屏，只能有一个主人：<b>开一个，另一个自动被关掉</b>（保存后设备会回信说明关掉的是哪个），不必自己手动去关。</div>
     </details>
 
 
@@ -604,6 +615,8 @@ details summary{ cursor:pointer; font-weight:600; font-size:14px; color:var(--in
       <input type="file" id="upFile" accept=".bin,.html,.htm" style="width:100%;font-size:13px" aria-label="选择升级文件（.bin 固件或 .html 控制页）">
       <div class="row"><button class="mini" id="upGo">上传并升级</button><span class="savestate" id="upmsg"></span></div>
       <div class="hint">选好文件直接上传，类型自动识别：<b>.bin</b> = 固件升级（控制页一并更新、设置重置、热点名与密码保留、设备自动重启）；<b>.html</b> = 只更新控制页（不重启）。</div>
+      <div class="row"><label>升级状态</label><span class="savestate" id="otaState"></span></div>
+      <div class="hint">固件升级后新版本会自我确认一次（约 12 秒），确认前若被断电或重启，设备会退回旧版本且<b>不报错</b>。上面这行就是那件事的凭证：ABORTED = 有一次升级被静默回滚了，需要重刷。</div>
       <div class="row" style="margin-top:12px">
         <button class="mini" id="webClear">恢复内置页面</button><span class="savestate" id="webmsg"></span>
       </div>
@@ -1357,6 +1370,21 @@ function frameWithHeader(payload){
   var out = new Uint8Array(16 + len);
   out.set(hdr, 0); out.set(payload, 16);
   return out;
+}
+
+/* R1.5.4：把 /api/info 的 OTA 槽状态翻译成人话（纯函数，冒烟可直接跑）。
+   背景：新固件启动后要在自我确认窗口内活过 12 秒，否则 bootloader 把它标成
+   ABORTED 永久跳过 —— 表现为「刷了还是旧版本」且全程不报错（R1.5.3 实机踩过）。
+   旧固件不上报这些字段 -> 返回 null，页面药丸不出现（.savestate:empty 隐藏）。 */
+function otaNote(j){
+  if (j == null || j.ota_run == null) return null;
+  var run = j.ota_run || "?", st = j.ota_state || "UNDEFINED";
+  var other = j.ota_other || "", ost = j.ota_other_state || "";
+  if (ost === "ABORTED" || ost === "INVALID")
+    return { kind:"err", text:"上次升级到 " + other + " 没确认成功，已被自动退回（现在跑的是 " + run + "）：请重新升级" };
+  if (st === "NEW" || st === "PENDING")
+    return { kind:"warn", text:run + " 正在自我确认（开机后约 12 秒），这一刻别断电" };
+  return { kind:"ok", text:run + " 已确认，不会被回滚" };
 }
 
 /* ==================================================================
@@ -2266,6 +2294,29 @@ function refreshInfo(){
     $("i-ssid").textContent = j.ssid || "—";
     $("i-staip").textContent = j.sta_ip || "—";
     $("i-heap").textContent = j.heap != null ? (j.heap/1024).toFixed(0) + " KB" : "—";
+    /* R1.5.4：帧缓冲实际分到的字节 + 当前最大连续空闲块 —— 「设备起得来、
+       屏点得亮」就靠这两个数（120000 那档只差 1216 字节时就直接 OOM 循环）。 */
+    var fbEl = $("i-fb");
+    fbEl.style.color = "";
+    if (j.fb > 0){
+      fbEl.textContent = (j.fb/1024).toFixed(0) + " KB";
+      fbEl.title = "帧缓冲按当前画像分配：768×552 = 105984 字节，800×600 = 120000 字节。"
+        + "此刻最大连续空闲块 " + (j.heap_max != null ? Math.round(j.heap_max/1024) + " KB" : "未知")
+        + "；分配不到 800×600 那一档时设备会自动退回 768×552，不会不开机。";
+    } else if (j.fb === 0){
+      fbEl.textContent = "未分配";
+      fbEl.style.color = "var(--err)";
+      fbEl.title = "固件没拿到帧缓冲：传图、日历、轮播都不可用。请重启设备，仍不行就回退上一版固件。";
+    } else {
+      fbEl.textContent = "—";
+      fbEl.title = "旧固件不上报这一项，升级固件后可见";
+    }
+    var oNote = otaNote(j), oEl = $("otaState");
+    oEl.className = "savestate";
+    /* 旧固件没有 ota_* 字段：显示「—」并注明，而不是留一个空药丸让人以为坏了。 */
+    oEl.textContent = oNote ? oNote.text : "—";
+    oEl.title = oNote ? "" : "旧固件不上报这一项，升级固件后可见";
+    if (oNote) oEl.classList.add(oNote.kind);
     $("i-bat").textContent = (j.bat_mv > 0) ? (j.bat_mv/1000).toFixed(2) + " V" : "未连接";
     $("i-clients").textContent = j.clients != null ? j.clients : "—";
     var ok = (j.ssid != null);
@@ -2682,9 +2733,12 @@ $("carSaveCfg").addEventListener("click", function(){
       /* 400 "no changes"：守卫未拦截（carLast 未知）且值与设备一致 —— 读响应体甄别，勿误报断连。 */
       return r.text().then(function(t){ throw { code: r.status, text: t || "" }; });
     }
-    /* 不轻信 200：回读列表核对，确认配置真的落进了设备。 */
-    return fetch(api("/api/carousel/list?t=" + Date.now()))
-      .then(function(r2){ return r2.ok ? r2.json() : null; });
+    /* cfg 应答里带着互斥副作用（cal_off），先留住它；再用 list 回读核对配置真落进了设备。 */
+    return r.json().catch(function(){ return null; }).then(function(c){
+      return fetch(api("/api/carousel/list?t=" + Date.now()))
+        .then(function(r2){ return r2.ok ? r2.json() : null; })
+        .then(function(j){ if (j) j.cal_off = (c && c.cal_off) ? 1 : 0; return j; });
+    });
   }).then(function(j){
     carBusy = false;
     if (!j){ saveState("carcfgmsg", "warn", "⚠ 已提交，但读不到设备确认 —— 请刷新页面核对"); return; }
@@ -2692,18 +2746,20 @@ $("carSaveCfg").addEventListener("click", function(){
     $("carModeSel").value = String(j.mode);
     if (j.int_s != null) $("carIntMin").value = secToMin(j.int_s);
     carRenderList(j);
+    var mutex = j.cal_off ? " · 日历已自动关闭（同一块屏只让一个主人用）" : "";
+    if (j.cal_off) calRefresh();
     /* 设备没报 int_s（旧固件）时不参与比对，否则「回读不一致」会误伤。 */
     if (!!j.on !== !!wantOn || +j.mode !== wantMode || (j.int_s != null && +j.int_s !== wantInt)){
       saveState("carcfgmsg", "warn", "⚠ 已提交，但回读不一致（on=" + j.on + " mode=" + j.mode +
-        " int_s=" + j.int_s + "）—— 请刷新核对");
+        " int_s=" + j.int_s + "）—— 请刷新核对" + mutex);
     } else if (!wantOn){
       saveState("carcfgmsg", "ok", "✓ 已保存（自动轮播当前关闭）");
     } else if (!wantInt){
-      saveState("carcfgmsg", "ok", "✓ 已保存（未设换图间隔，不会自动换图）");
+      saveState("carcfgmsg", "ok", "✓ 已保存（未设换图间隔，不会自动换图）" + mutex);
     } else if (!j.n){
-      saveState("carcfgmsg", "ok", "✓ 已保存（" + fmtEvery(wantInt) + "，列表为空，先加入画面才有效果）");
+      saveState("carcfgmsg", "ok", "✓ 已保存（" + fmtEvery(wantInt) + "，列表为空，先加入画面才有效果）" + mutex);
     } else {
-      saveState("carcfgmsg", "ok", "✓ 已保存并生效（" + fmtEvery(wantInt) + "）");
+      saveState("carcfgmsg", "ok", "✓ 已保存并生效（" + fmtEvery(wantInt) + "）" + mutex);
     }
   }).catch(function(e){
     carBusy = false;
@@ -2796,20 +2852,49 @@ function calTake(j){
   if (j.lang != null) $("calLang").value = calLast.lang ? "1" : "0";
   if (j.style != null) $("calStyle").value = String(calLast.style);
 }
-/* 两处回显只转述设备自己的读数（GET /api/time 的 synced / next_in_s），页面不推算。 */
+/* 时区偏移读设备回报值（东为正，支持半小时），页面不自己猜。 */
+function fmtTz(min){
+  var m = Math.trunc(+min || 0), a = Math.abs(m);
+  return "UTC" + (m < 0 ? "-" : "+") + Math.floor(a / 60)
+    + (a % 60 ? ":" + (a % 60 < 10 ? "0" : "") + (a % 60) : "");
+}
+/* 三处回显只转述设备自己的读数（GET /api/time 的 synced / next_in_s / sntp_at），页面不推算。 */
 function calShowState(j){
-  var now = $("calNow"), next = $("calNext");
+  var now = $("calNow"), next = $("calNext"), sn = $("calSntp");
   if (!now || !next) return;
   now.style.color = ""; next.style.color = "";
-  if (!j){ now.textContent = "—"; next.textContent = "—"; return; }
+  if (sn) sn.style.color = "";
+  if (!j){ now.textContent = "—"; next.textContent = "—"; if (sn) sn.textContent = "—"; return; }
   if (!j.synced){
     now.textContent = "⚠ 未同步（设备掉过电）";
     now.style.color = "#a5701a";
   } else {
     now.textContent = j.y + "年" + j.m + "月" + j.d + "日 星期" + CAL_WD[clamp(+j.wd || 0, 0, 6)];
   }
+  if (sn){
+    var tz = fmtTz(j.tz_min);
+    if (j.tz_min == null && j.sntp_at == null) sn.textContent = "此设备固件不含自动校时（需 R1.5.2 及以上）";
+    else if (!j.on) sn.textContent = tz + " · 日历关着时不自动校时";
+    else if (!(+j.sntp_at > 0)){
+      sn.textContent = tz + " · 尚未自动校时（下次醒来时补）";
+      sn.style.color = "#a5701a";
+    } else {
+      var age = (+j.mono || 0) - (+j.sntp_at || 0);
+      sn.textContent = tz + " · " + (age < 90 ? "刚刚自动校过时" : fmtIn(age) + "前自动校过时");
+    }
+  }
   if (!j.on){ next.textContent = "自动改日期已关闭"; return; }
-  if (!j.synced){ next.textContent = "⚠ 日期没同步时不会自动改日期"; next.style.color = "#a5701a"; return; }
+  if (!j.synced){
+    /* R1.5.3：没校上时 next_in_s 的含义换成「距下次自己醒来重试校时」（退避窗口），
+       不再是「距换日时刻」—— 这一行必须据此改口，否则用户以为设备罢工了。
+       旧固件（无 ntp_try 字段）不排期，退回 R1.5.2 的说法。 */
+    var rt = +j.next_in_s || 0;
+    if (j.ntp_try == null) next.textContent = "⚠ 日期没同步时不会自动改日期";
+    else if (rt) next.textContent = "⚠ 日期未同步 · 约 " + fmtIn(rt) + "后自己再试校时"
+         + (+j.ntp_try > 1 ? "（已连续失败 " + j.ntp_try + " 次）" : "");
+    else next.textContent = "⚠ 日期未同步 · 没配「启用联网」，不会自动改日期";
+    next.style.color = "#a5701a"; return;
+  }
   var nt = +j.next_in_s || 0;
   if (!nt){ next.textContent = "⚠ 设备未排期，刷新页面重试"; next.style.color = "#a5701a"; return; }
   /* next_in_s = 1 是固件的「已到期」标记，不是还剩 1 秒。 */
@@ -2830,7 +2915,7 @@ function calPush(silent){
   return fetch(api("/api/time"), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: "t=" + calWallPack()
+    body: "t=" + calWallPack() + "&tz_min=" + (-new Date().getTimezoneOffset())
   }).then(function(r){
     if (!r.ok) throw { code: r.status, text: "" };
     return r.json();
@@ -2838,7 +2923,8 @@ function calPush(silent){
     calTake(j); calShowState(j);
     if (!silent){
       if (!j.synced) saveState("calmsg", "err", "✗ 同步失败：设备未接受这个日期，请重试");
-      else saveState("calmsg", "ok", "✓ 已同步为 " + j.y + "年" + j.m + "月" + j.d + "日");
+      else saveState("calmsg", "ok", "✓ 已同步为 " + j.y + "年" + j.m + "月" + j.d + "日"
+        + (j.tz_min == null ? "" : " · 时区 " + fmtTz(j.tz_min) + " 已写入（自动校时用）"));
     }
     return j;
   }).catch(function(e){
@@ -2849,17 +2935,26 @@ function calPush(silent){
     return null;
   });
 }
+var calReread = false;   /* 每次开页只补读一次，见下面 setTimeout 的注释 */
 function calRefresh(){
+  var sn = $("calSntp");
   if (LOCAL_PREVIEW){
     calState = null; calLast = null;
     $("calNow").textContent = "本地预览（未连设备）";
     $("calNext").textContent = "本地预览（未连设备）";
+    if (sn) sn.textContent = "本地预览（未连设备）";
     return;
   }
   fetch(api("/api/time?t=" + Date.now()))
     .then(function(r){ if (!r.ok) throw { code: r.status }; return r.json(); })
     .then(function(j){
       calTake(j); calShowState(j);
+      /* 开机后 SNTP 落地要几秒：那一刻读到的是中间态（synced=0 / sntp_at=0），
+         不补读就会一直显示「尚未自动校时」。只补一次，不做轮询 —— 每次请求都会
+         让设备 power_activity()，轮询会把深睡彻底废掉。 */
+      if (!calReread && j.on && !(+j.sntp_at > 0)) {
+        calReread = true; setTimeout(calRefresh, 12000);
+      }
       if (!j.synced) return calPush(true);   /* 掉电后自动补一次，不用用户找按钮 */
     })
     .catch(function(e){
@@ -2868,6 +2963,7 @@ function calRefresh(){
         ? "此设备固件不含日历功能（需 R1.5.0 及以上）"
         : "读取失败：设备未响应，刷新重试";
       $("calNext").textContent = "—";
+      if (sn) sn.textContent = "—";
     });
 }
 
@@ -2884,6 +2980,8 @@ $("calSaveCfg").addEventListener("click", function(){
   var wantLang = ($("calLang").value === "1") ? 1 : 0;
   var wantStyle = calStyleNum($("calStyle").value);
   var faceSwitch = !!calLast && (calLast.lang !== wantLang || calLast.style !== wantStyle);
+  /* 设备对「刚被打开的日历」会立刻把当天夺回屏上，页面要照实说，不能只说「已保存」。 */
+  var turnedOn = !!wantOn && !!calLast && !calLast.on;
   /* 与设备当前一致时固件会回 400 "no changes"（会被错译成断连）——就地确认，不发请求。 */
   if (calLast && calLast.on === !!wantOn && calLast.tod_s === wantTod
       && calLast.lang === wantLang && calLast.style === wantStyle){
@@ -2911,13 +3009,16 @@ $("calSaveCfg").addEventListener("click", function(){
       saveState("calcfgmsg", "ok", "✓ 已保存（自动改日期当前关闭"
         + (faceSwitch ? "，语言 / 样式切换不会改动当前画面" : "") + "）");
     } else if (!j.synced){
-      saveState("calcfgmsg", "warn", "⚠ 已保存，但设备日期还没同步 —— 点「同步今天日期」后才会自动改");
-    } else if ($("carOn").checked){
-      saveState("calcfgmsg", "warn", "⚠ 已保存（每天 " + secToTod(wantTod) + " 上屏），但轮播也开着 —— 两者会互相盖屏");
+      saveState("calcfgmsg", "warn", "⚠ 已保存，但设备日期还没同步（掉过电）—— 点「同步今天日期」立刻补；"
+        + "开着「启用联网」时它下次醒来也会自己校时");
     } else {
       saveState("calcfgmsg", "ok", "✓ 已保存 · 每天 " + secToTod(wantTod) + " 自动上屏"
-        + (faceSwitch ? " · 已按新语言 / 样式重排画面（约 15~25 秒）" : ""));
+        + (turnedOn ? " · 今天这张正在上屏（约 15~25 秒）"
+                    : (faceSwitch ? " · 已按新语言 / 样式重排画面（约 15~25 秒）" : ""))
+        + (j.car_off ? " · 相册轮播已自动关闭（这块屏交给日历）" : ""));
     }
+    /* 互斥是设备端做的（car_off=1 才算真关掉）：页面跟着把轮播的勾选同步过来。 */
+    if (j.car_off) carRefresh();
   }).catch(function(e){
     calBusy = false;
     if (e && e.code === 400 && /no changes/.test(e.text || "")){

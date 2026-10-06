@@ -27,6 +27,11 @@ void netif_sta_apply(void);
 /* 按当前设置的功率档位调整发射功率（高 18dBm / 中 10dBm / 低 8.5dBm）。 */
 void netif_ap_apply_tx_power(void);
 
+/* 进入深睡前调用：此后 esp_wifi_stop() 抛出的 STA 断线事件不再触发自动重连。
+   （R1.5.1：入睡路径自己停 WiFi → 断线回调去 esp_wifi_connect() → WiFi 驱动已停
+     → ESP_ERR_WIFI_NOT_STARTED → abort() 重启，导致 STA 开启时永远睡不进去。） */
+void netif_sta_suspend_begin(void);
+
 /* STA 是否已上线（拿到 IP）。 */
 bool netif_sta_up(void);
 
