@@ -218,7 +218,17 @@ static int today_num(int32_t *out)
     return 1;
 }
 
-/* 方案 B：日历开着 + 时钟可用 + 今天该刷 → 补刷当天（异步，不挂调用方）。
+/* frame_task 还没创建时（开机早期），补刷必须**当场刷完才返回**：异步入口只是把画好的
+   帧交给显示任务并记上「今天已上屏」，可那时任务还不存在 —— 那一帧永远上不了屏，而
+   NVS 里的天号已经烧掉，这一天再也不会重试。R1.5.7② 的 frame_pending_display() 护栏
+   正是为它设的，代价是「换日那一拍」被拦着不许早睡，落回正常启动、开热点、把整段空闲
+   窗口烧完（L5 实测 196 秒）。R1.5.8 于是把这一拍改成同步：刷完即睡。
+   闸门由 main.c 掌管：定时自醒分支起 SNTP 之前拉起来（校完时那次补刷走的是同一条路），
+   frame_task 创建前落下去；之后的 HTTP / 后台任务照旧异步，不把应答挂 15~25 秒。 */
+static int s_display_sync;
+void calendar_display_sync(int on) { s_display_sync = on ? 1 : 0; }
+
+/* 方案 B：日历开着 + 时钟可用 + 今天该刷 → 补刷当天。
    三个入口共用：开机（帧缓冲就绪后）、页面推来日期、换日时刻到点而设备正醒着。
    force = 「屏上此刻挂着什么未知」（掉电 / 复位 / OTA 重启），此时不许拿
    s_shown_day 当理由不回屏（R1.5.3①）；s_try_day 保证一次开机最多试一次，
@@ -232,7 +242,7 @@ static void catchup_today(int force)
     if (!force && s_shown_day == today) return;
     ESP_LOGI(TAG, "day %ld %s on panel, catching up", (long)today,
              force ? "content unknown" : "missing");
-    (void)calendar_show(1);
+    (void)calendar_show(!s_display_sync);
 }
 
 void calendar_boot_catchup(int screen_unknown)

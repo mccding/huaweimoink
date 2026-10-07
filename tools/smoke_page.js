@@ -1143,8 +1143,8 @@ ok("R1.5.5 补读排在「未同步就补推一次」之前，且写明不许轮
    < js.indexOf("if (!j.synced) return calPush(true);")
    && js.indexOf("轮询会把深睡彻底废掉") >= 0);
 
-ok("R1.5.7 版本号两处一致（页面 meta 与断言基线）",
-   page.includes('<meta name="moink-page-version" content="R1.5.7">'));
+ok("R1.5.8 版本号两处一致（页面 meta 与断言基线）",
+   page.includes('<meta name="moink-page-version" content="R1.5.8">'));
 
 /* ---------- R1.5.6：换图间隔下限 5 分钟（页面前置拦截 + 文案）---------- */
 ok("R1.5.6 换图间隔下限常量 = 5 分钟，并写明对应固件 CAR_INT_MIN_S 300 秒",

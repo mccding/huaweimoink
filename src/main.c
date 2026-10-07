@@ -550,6 +550,11 @@ void app_main(void)
        而先按漂掉的时钟刷了再校正，就得白刷第二遍屏。
        这里只起 WiFi：不起 HTTP、不进热点等待窗口，校完照旧立刻回睡（netif_ap_init 幂等，
        后面正常启动路径再调一次不会重入）。 */
+    /* R1.5.8：从现在到 frame_task 创建之前，日历补刷一律当场刷完（校完时那次 catchup
+       也在这一段里）。定时自醒这一拍紧接着要按「画面是否还排着」决定能不能立刻回睡，
+       异步 = 天号记了、屏还没刷，那一拍就只能落回正常启动把热点窗口烧完。按键 / 上电
+       开机不开这道闸：那条要早点起热点等人传图，不该为刷屏多挂 15~25 秒。 */
+    calendar_display_sync(auto_wake);
     if (auto_wake && calendar_sntp_needed()) {
         netif_ap_init();
         calendar_sntp_run();            /* 阻塞但有超时，最坏约 34 秒 */
@@ -565,6 +570,10 @@ void app_main(void)
        而 UNDEFINED 是枚举 0 → 位图恒为 1，永远不等于 0（sleep_modes.c:2580）。旧写法让
        这道 force 恒假，只要 NVS 的 cal_day 记着今天，掉电重上电就永远不回屏（R1.5.3①
        实际从未生效，2026-10-06 实机定案）。 */
+    /* R1.5.8：异步补刷在这条路上会同时踩两件事 —— 天号已记成今天（下面判不到「换日
+       到期」）+ 帧还排着没上屏（护栏 frame_pending_display() 不许睡），于是换日那一拍
+       必然落回正常启动、开热点、把整段空闲窗口烧完。闸门在上面 calendar_display_sync
+       那里已经按 auto_wake 拉好了。 */
     calendar_boot_catchup((wake & (1u << ESP_SLEEP_WAKEUP_UNDEFINED)) != 0);
 
     /* 定时唤醒路径（R1.5.0）：各节奏独立到期，只做到期的那件事，默认不起 WiFi。
@@ -596,16 +605,22 @@ void app_main(void)
             power_enter_deep_sleep();               /* 不返回 */
         }
         /* R1.5.7②：醒得太早（这一拍根本还没到期）也不原地等 —— 立刻回睡，按原来的
-           下次时刻重新武装。实测 300 s 周期里醒着 185~205 s（占空比 65%），这一百多秒
-           什么都没干，只是在等下一拍成熟，纯烧电。
+           下次时刻重新武装。
+           ※ 「实测 300 s 周期里醒着 185~205 s（占空比 65%）」这一句是撤回的：那组数是我
+              每 5~20 秒 curl 一轮取来的，每个请求都会 power_activity() 把空闲窗口续满，
+              等于我自己把设备喂醒的，只能当上界。不发 HTTP 的串口枚举边沿复测 = 约 40 秒
+              一拍、占空比 14.3%（R1.5.7 验收 L6），本条的触发次数那次是 0 —— 也就是说
+              换图路径上这一跳多半轮不到，留着是给「醒来发现还早」的兜底。
            四道门槛，缺一不可：
              ① !failed —— 「到期但做失败」必须落回正常启动，起热点让人来救（槽位全坏
                 时轮播会照旧消费掉一拍，next 一下跳到 int_s，不挡住就永远静默失败）；
              ② 热点没同时到期（与上面 ticked 分支同一条）；
-             ③ frame_pending_display() == 0 —— 日历补刷走的是异步排队
-                （calendar_show(1) → frame_render_queue），而 frame_task 要到本函数末尾
-                才创建；带着没上屏的一帧睡下去 = 这一天的日历再也不会重试（s_shown_day
-                已经记账了），这是日历功能最容易被这个优化修坏的一条路；
+             ③ frame_pending_display() == 0 —— 带着没上屏的一帧睡下去 = 那一帧永远上不了
+                屏（frame_task 要到本函数末尾才创建），而日历的「今天已上屏」天号当场就记进
+                了 NVS，这一天再也不会重试 —— 这是日历最容易被本条优化修坏的路。R1.5.8 起
+                定时自醒那一段的补刷改成同步（上面 calendar_display_sync(auto_wake) 那道闸），
+                换日一拍走到这里帧已经刷完、这一条自然成立；还留在异步的是按键 / 上电开机的
+                补刷和页面推日期，那些场合本来就不会走到这个 auto_wake 分支。
              ④ 还要等 > BOOT_IDLE_S —— 一两秒的剩余不值得一次醒睡。
            只在外层 auto_wake（TIMER 自醒）里判：按键 / 上电开机是要等人传图的。
            必须在 power_mark_hotspot_wake() 之前返回：那条会把热点节奏起点挪到此刻，
@@ -634,6 +649,9 @@ void app_main(void)
        （日历开着 + STA 已配时才起，见 calendar_sntp_needed）。 */
     calendar_sntp_autostart();
 
+    /* frame_task 从这一行起就在了，补刷交回给它：闸门落下去，HTTP 应答不该再被
+       15~25 秒的四色全刷挂住（R1.5.8 的同步只覆盖「任务还不存在」那一段）。 */
+    calendar_display_sync(0);
     xTaskCreate(frame_task, "frame", 4096, NULL, 5, NULL);
     xTaskCreate(idle_monitor_task, "idle_mon", 3072, NULL, 4, NULL);
     xTaskCreate(button_task, "button", 3072, NULL, 4, NULL);

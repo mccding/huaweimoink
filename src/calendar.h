@@ -96,6 +96,12 @@ int calendar_boot_tick(void);
    幂等：一次开机最多试一次，失败也不会被每秒的 catchup 重刷。 */
 void calendar_boot_catchup(int screen_unknown);
 
+/* R1.5.8：这道闸门决定补刷是「当场刷完」还是「交给显示任务」。on=1 = 当场刷完，
+   只在 frame_task 还不存在、而调用方紧接着要根据「画面有没有排队」决定能不能立刻
+   回深睡的那一段里开（main.c 的定时自醒分支）；off=0 = 异步，HTTP 应答和后台任务
+   都用它，免得被 15~25 秒的四色全刷挂住。 */
+void calendar_display_sync(int on);
+
 /* 醒着时的换日兜底：定时器路径之外（设备被页面喂着没睡、或睡前的那几秒）也要在
    换日时刻把当天刷上屏。给 idle_monitor_task 每秒调一次，幂等。 */
 void calendar_awake_tick(void);
