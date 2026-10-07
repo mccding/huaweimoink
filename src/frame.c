@@ -288,6 +288,17 @@ int frame_display_pending(void)
     return frame_display_now();
 }
 
+/* 有没有「已经排队、还没人刷」的画面：1 = 有。
+   异步入口（日历补刷 calendar_show(1) / frame_queue_slot）只把缓冲交出来 + 给
+   s_frame_ready 发信号，真正上屏的是显示任务。显示任务还没起来的时候（开机早期的
+   定时自醒分支）据此入睡 = 那一帧永远上不了屏，而日历的「今天已上屏」天号当场就
+   记进了 NVS，这一天再也不会重试 —— 所以 R1.5.7② 的「醒得太早就回睡」必须先问这里。 */
+int frame_pending_display(void)
+{
+    if (s_pending_slot >= 0) return 1;
+    return s_frame_ready != NULL && uxSemaphoreGetCount(s_frame_ready) > 0;
+}
+
 /* ---------- R1.5.0（功能1）：固件自绘画面（日历） ---------- */
 
 /* 持锁画 -> （可选）当场刷新。async = 1 时只把缓冲交给显示任务，应答不被 15~25 秒挂住。 */

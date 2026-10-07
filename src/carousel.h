@@ -1,6 +1,7 @@
 #ifndef MOINK_CAROUSEL_H
 #define MOINK_CAROUSEL_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
 #include "esp_http_server.h"
@@ -42,8 +43,11 @@ int carousel_switch_on(void);
    不动屏、不删帧。返回 1 = 本次真的从「开」变「关」。 */
 int carousel_set_off(void);
 
-/* 换图节奏上下限（秒），也是 /api/carousel/cfg 的 int_s 校验范围；0 = 不参与定时。 */
-#define CAR_INT_MIN_S  60
+/* 换图节奏上下限（秒），也是 /api/carousel/cfg 的 int_s 校验范围；0 = 不参与定时。
+ * R1.5.6：下限 60 → 300。一次离线换图 = 冷启动 + 四色全刷，实测整个清醒子周期约
+ * 16 s，再加上 power.c 的武装兜底下限 MIN_ARM_S=30 —— 60 s 间隔里这两项就吃满了，
+ * 判定会在「到期 / 没到期」之间来回翻，节奏必然退化。间隔要明显大于 46 s 才成立。 */
+#define CAR_INT_MIN_S  300
 #define CAR_INT_MAX_S  86400
 
 /* 设换图间隔（秒）并立即落盘；非 0 且越界返回 ESP_ERR_INVALID_ARG，状态不变。
@@ -57,6 +61,14 @@ uint32_t carousel_next_in_s(void);
 /* 定时唤醒且节奏到期时推进一张：0 = 已显示（调用方随即深睡），-1 = 不可用 / 全部读失败。
    无论成败都记消费时刻，失败时按整间隔退避，不会连续空醒。 */
 int carousel_boot_tick(void);
+
+/* 醒着时的换图兜底：给 idle_monitor_task 每秒调一次，节奏到期就当场换一张。
+   没有它，倒计时在「设备被页面喂着没睡」的窗口里到期就没人消费，要等下一次
+   睡眠-唤醒周期才能补上（R1.5.6 实机定案：开着页面轮播就不走）。幂等。
+   返回 true = 本次真换了一张并已完成刷屏（frame_show_slot 是同步的，返回时屏已
+   定版、面板已进深睡），调用方可以按 boot 分支那样立刻回深睡；false = 没到期或
+   换图失败（失败也已消费一拍并整间隔退避，不能因为返回 false 就重试）。 */
+bool carousel_awake_tick(void);
 
 /* 恢复出厂：擦掉全部帧槽并清内存状态（NVS 键由 settings_factory_reset 清）。 */
 void carousel_factory_wipe(void);

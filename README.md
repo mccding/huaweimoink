@@ -132,7 +132,7 @@ moink/
 |------|------|
 | [docs/入门教程.md](docs/入门教程.md) | 新手图文教程：从安装到显示第一张照片 |
 | [docs/R1.5.0-刷机与更新说明.md](docs/R1.5.0-刷机与更新说明.md) | R1.5.0 那一批（日历 / 待办 / 三 tab / 自定义节奏）的刷机与验证 |
-| [flash_kit/使用说明.txt](flash_kit/使用说明.txt) | **当前版本 R1.5.5** 的一键刷机包说明：升级方式、验收清单、本版判据 |
+| [flash_kit/使用说明.txt](flash_kit/使用说明.txt) | **当前版本 R1.5.7** 的一键刷机包说明：升级方式、验收清单、本版判据 |
 | [docs/CONTRACT.md](docs/CONTRACT.md) | 锁定契约：帧格式 / 色码 / 几何 / 引脚 / API / 版本判定 |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | 版本更新记录（R1.2.0 起固件与控制页共用单一版本号） |
 

@@ -77,6 +77,11 @@ void power_activity(void)
     s_last_activity = xTaskGetTickCount();
 }
 
+uint32_t power_idle_s(void)
+{
+    return (uint32_t)((xTaskGetTickCount() - s_last_activity) / configTICK_RATE_HZ);
+}
+
 void power_set_auto_wake(bool v) { s_auto_wake = v; }
 bool power_auto_wake(void) { return s_auto_wake; }
 

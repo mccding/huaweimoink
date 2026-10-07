@@ -70,6 +70,9 @@ uint8_t *frame_buf(void);        /* 缓冲未就绪时返回 NULL，调用方必
 int frame_show_slot(uint8_t slot);
 void frame_queue_slot(uint8_t slot);
 int frame_display_pending(void);
+/* 还有没有排着没上屏的画面（1 = 有）。入睡前的护栏：异步渲染靠显示任务落地，
+   任务还没建就睡会把那一帧连同一天的日历一起丢掉。 */
+int frame_pending_display(void);
 
 /*
  * ---------- R1.5.0（功能1）：固件自绘画面（日历） ----------

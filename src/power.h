@@ -31,6 +31,11 @@ void power_init(void);
 /* 重置空闲计时（任何上传 / 请求都调用）。 */
 void power_activity(void);
 
+/* 距最后一次请求 / 上传过了多少秒（只读，不改任何休眠判定）。
+   给「换完图提前回睡」用：传输还在一片一片地 call power_activity()，静默够久
+   才说明这条连接真的停了，此刻入睡才不会把 OTA 写入或传图拦腰截断。 */
+uint32_t power_idle_s(void);
+
 /* 本次是否为定时器唤醒（决定是否套用短窗口）。 */
 void power_set_auto_wake(bool v);
 bool power_auto_wake(void);

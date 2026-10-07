@@ -97,6 +97,15 @@ void carousel_init(void)
     nvs_get_u32(s_nvs, "car_int_s", &s_car.int_s);
     if (nvs_get_u8(s_nvs, "car_cur", &u8) == ESP_OK) s_car.cur = u8;
 
+    /* R1.5.6 把下限从 60 抬到 300：只改校验管不到存量设备 —— NVS 里存着 60 的
+       板子开机照旧按 60 跑，所以这里当场钳制并回写。 */
+    if (s_car.int_s != 0 && s_car.int_s < CAR_INT_MIN_S) {
+        ESP_LOGW(TAG, "stored interval %lus s below new floor, clamped to %d s",
+                 (unsigned long)s_car.int_s, CAR_INT_MIN_S);
+        s_car.int_s = CAR_INT_MIN_S;
+        persist_cfg();
+    }
+
     int slots = store_slots();
     uint8_t raw[STORE_SLOT_MAX];
     size_t blen = sizeof(raw);
@@ -226,6 +235,18 @@ int carousel_boot_tick(void)
         base = j;
     }
     return -1;
+}
+
+bool carousel_awake_tick(void)
+{
+    /* 与 calendar_awake_tick 同构：醒着也把到期的一拍吃掉。否则会攒出一个
+       「倒计时在清醒窗口内到期、却没人消费」的死循环 —— 睡前算出的下次要等 = 1
+       被 MIN_ARM_S 抬成 30，醒来时 el 又没到间隔，于是整段空闲窗口白烧。
+       全刷约 15~25 s，是在 idle_monitor_task 里同步跑的（日历也一样），期间不判休眠。
+       返回「这次真换了一张」：R1.5.7 让调用方把 boot 分支那条「换完即睡」的短路
+       也用到清醒窗口内的换图上。失败返回 false 但已消费一拍（退避），不重试。 */
+    if (carousel_next_in_s() != 1) return false;
+    return carousel_boot_tick() == 0;
 }
 
 void carousel_factory_wipe(void)
@@ -451,7 +472,7 @@ static esp_err_t advance_handler(httpd_req_t *req)
 }
 
 /* POST /api/carousel/cfg  on=0|1&mode=0|1&int_s=秒（键独立可省；全同回 400 no changes）。
-   int_s：0 = 关（轮播不再触发定时唤醒），60..86400 = 换图间隔秒数，越界回 400。 */
+   int_s：0 = 关（轮播不再触发定时唤醒），300..86400 = 换图间隔秒数，越界回 400。 */
 static esp_err_t cfg_handler(httpd_req_t *req)
 {
     power_activity();

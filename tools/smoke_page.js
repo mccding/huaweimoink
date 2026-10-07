@@ -1143,8 +1143,30 @@ ok("R1.5.5 补读排在「未同步就补推一次」之前，且写明不许轮
    < js.indexOf("if (!j.synced) return calPush(true);")
    && js.indexOf("轮询会把深睡彻底废掉") >= 0);
 
-ok("R1.5.5 版本号两处一致（页面 meta 与断言基线）",
-   page.includes('<meta name="moink-page-version" content="R1.5.5">'));
+ok("R1.5.7 版本号两处一致（页面 meta 与断言基线）",
+   page.includes('<meta name="moink-page-version" content="R1.5.7">'));
+
+/* ---------- R1.5.6：换图间隔下限 5 分钟（页面前置拦截 + 文案）---------- */
+ok("R1.5.6 换图间隔下限常量 = 5 分钟，并写明对应固件 CAR_INT_MIN_S 300 秒",
+   js.indexOf("var CAR_MIN = 5;") >= 0
+   && page.indexOf("下限 5 分钟（R1.5.6，= 固件 CAR_INT_MIN_S 300 秒）") >= 0);
+ok("R1.5.6 保存前就地挡 1~4 分钟（0 仍放行 = 不自动换图），不再等固件回 400",
+   js.indexOf("if (wantInt > 0 && wantInt < CAR_MIN * 60){") >= 0
+   && js.indexOf('saveState("carcfgmsg", "err", "\u2717 换图间隔最短 " + CAR_MIN + " 分钟（0 = 不自动换图）")') >= 0);
+ok("R1.5.6 守卫排在「与设备当前一致就不发请求」之前，坏值不会先撞上 no changes 误译",
+   js.indexOf("if (wantInt > 0 && wantInt < CAR_MIN * 60){")
+   < js.indexOf("if (carLast && carLast.on === !!wantOn && carLast.mode === wantMode && carLast.int_s === wantInt){"));
+ok("R1.5.6 输入框旁明示最短 5 分钟",
+   page.indexOf("0 = 不自动换图，最短 5 分钟") >= 0);
+
+/* ---------- R1.5.7：换完图即回睡（省电），页面必须把「别开着页面等换图」讲清 ---------- */
+ok("R1.5.7 轮播卡明示换完图约 15 秒回深睡、别开着页面等换图、如何再唤醒",
+   page.indexOf("换完图后设备约 15 秒内就回深睡") >= 0
+   && page.indexOf("别把本页一直开着等它换图") >= 0
+   && page.indexOf("按一下机身按键或重新上电即可唤醒") >= 0);
+ok("R1.5.7 该提示排在轮播卡内、日历互斥那条之前（先讲行为再讲互斥）",
+   page.indexOf("换完图后设备约 15 秒内就回深睡")
+   < page.indexOf("轮播与「日历自动改日期」用同一块屏"));
 
 ok("R1.5.5 校时机制长文收进折叠块，常驻只留一句「不必手动同步」",
    page.indexOf("<summary>校时的原理与边界（一般不用读）</summary>") >= 0

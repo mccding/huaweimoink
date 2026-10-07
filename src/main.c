@@ -437,12 +437,29 @@ static void frame_task(void *arg)
     }
 }
 
+/* R1.5.7：换完图后不再把整段等人窗口烧完。boot 分支只在「开机那一刻」判到期，而
+   一拍常常要再等十几秒才成熟（idle_monitor_task 要等 netif + httpd 起来才跑到），
+   于是实际换图发生在这里 —— 不短路就得再睡 sleep_s 才走：R1.5.6 实测 300 s 周期里
+   醒着 257 s（占空比 85%），这就是「换图节奏对了但电还是要抽干」的那一半问题。
+   静默门槛：传输是一段一段 call power_activity() 的，静默够久才说明这条连接真停了。 */
+#define SWAP_QUIET_S 15
+
 static void idle_monitor_task(void *arg)
 {
     (void)arg;
+    bool swapped = false;   /* 本次开机已经换过一张：只等静默，不重复消费 */
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         calendar_awake_tick();   /* 醒着也要换日：不依赖"睡前有没有武装定时器" */
+        if (carousel_awake_tick()) swapped = true;   /* 醒着也要换图：见 R1.5.6 */
+        /* 回睡条件和 boot 分支同一条（热点没到期才睡），再加两道 boot 分支不需要、
+           这里却必需的护栏：① 本次确为定时自醒 —— 按键 / 上电开机是要等人传图的，
+           窗口必须留满；② 没人连着热点且请求静默够久 —— 否则会把 OTA 写入或传图
+           拦腰截断（截断不brick，但白等一次）。 */
+        if (swapped && power_auto_wake() && power_hotspot_in_s() != 1 &&
+            netif_ap_client_count() == 0 && power_idle_s() >= SWAP_QUIET_S) {
+            power_enter_deep_sleep();   /* 不返回 */
+        }
         if (power_should_sleep()) {
             power_enter_deep_sleep();   /* 不返回 */
         }
@@ -475,6 +492,10 @@ static void button_task(void *arg)
 }
 
 /* ---------------- 主入口 ---------------- */
+
+/* R1.5.7②：定时自醒「这一拍还没到期」时的直接回睡门槛 —— 下次到期还要等够 1 分钟
+   才值得睡（一次醒来到回睡本身要几秒，门槛太低容易掉进 1~2 秒一次的醒睡循环）。 */
+#define BOOT_IDLE_S 60
 
 void app_main(void)
 {
@@ -553,11 +574,13 @@ void app_main(void)
        注：日历和轮播互斥（R1.5.2，同一块屏只能有一个主人），不再存在「换日被换图盖掉」。 */
     if (auto_wake) {
         bool ticked = false;
+        bool failed = false;    /* 到期但没做成：这条要留窗口给人处理，见下 */
         if (calendar_next_in_s() == 1) {            /* 1 = 换日时刻已到（见 calendar.h） */
             if (calendar_boot_tick() == 0) {
                 ticked = true;
                 ESP_LOGI(TAG, "calendar day changed, panel updated");
             } else {
+                failed = true;
                 ESP_LOGW(TAG, "calendar update failed, normal boot");
             }
         } else if (carousel_next_in_s() == 1) {     /* 1 = 换图节奏已到期（见 carousel.h） */
@@ -565,14 +588,38 @@ void app_main(void)
                 ticked = true;
                 ESP_LOGI(TAG, "carousel tick displayed");
             } else {
+                failed = true;
                 ESP_LOGW(TAG, "carousel advance failed, normal boot");
             }
         }
         if (ticked && power_hotspot_in_s() != 1) {
             power_enter_deep_sleep();               /* 不返回 */
         }
-        /* 校时把时钟往回拉、换日其实还没到时，ticked 为假：落回正常启动（热点已起），
-           空闲窗口过后按校正过的时间重新武装。宁可多醒三分钟，也不在这里加第二条睡路。 */
+        /* R1.5.7②：醒得太早（这一拍根本还没到期）也不原地等 —— 立刻回睡，按原来的
+           下次时刻重新武装。实测 300 s 周期里醒着 185~205 s（占空比 65%），这一百多秒
+           什么都没干，只是在等下一拍成熟，纯烧电。
+           四道门槛，缺一不可：
+             ① !failed —— 「到期但做失败」必须落回正常启动，起热点让人来救（槽位全坏
+                时轮播会照旧消费掉一拍，next 一下跳到 int_s，不挡住就永远静默失败）；
+             ② 热点没同时到期（与上面 ticked 分支同一条）；
+             ③ frame_pending_display() == 0 —— 日历补刷走的是异步排队
+                （calendar_show(1) → frame_render_queue），而 frame_task 要到本函数末尾
+                才创建；带着没上屏的一帧睡下去 = 这一天的日历再也不会重试（s_shown_day
+                已经记账了），这是日历功能最容易被这个优化修坏的一条路；
+             ④ 还要等 > BOOT_IDLE_S —— 一两秒的剩余不值得一次醒睡。
+           只在外层 auto_wake（TIMER 自醒）里判：按键 / 上电开机是要等人传图的。
+           必须在 power_mark_hotspot_wake() 之前返回：那条会把热点节奏起点挪到此刻，
+           每次早醒都重置一次的话，热点就永远不会到期。 */
+        if (!ticked && !failed && power_hotspot_in_s() != 1 &&
+            !frame_pending_display() && power_next_wake_s() > BOOT_IDLE_S) {
+            /* ERROR 级是故意的：本工程 CONFIG_LOG_MAXIMUM_LEVEL=1，INFO/WARN 全被编译掉，
+               这一行是「一次间隔里早醒了几跳」唯一到得了串口的证据。 */
+            ESP_LOGE(TAG, "woke early, nothing due for %lus, back to sleep",
+                     (unsigned long)power_next_wake_s());
+            power_enter_deep_sleep();               /* 不返回 */
+        }
+        /* 剩下的情形：剩余不足 1 分钟 / 热点同时到期 / 有画面还排着没上屏 ——
+           落回正常启动，起热点等人传图，空闲窗口过后按校正过的时间重新武装。 */
     }
     power_mark_hotspot_wake();   /* 走到这里 = 本次开机要起热点，节奏起点挪到此刻 */
 
